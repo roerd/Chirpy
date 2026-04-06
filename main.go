@@ -1,9 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync/atomic"
 )
 
@@ -15,6 +17,7 @@ func main() {
 	mux.HandleFunc("GET /api/healthz", healthz)
 	mux.HandleFunc("GET /admin/metrics", apiCfg.metrics)
 	mux.HandleFunc("POST /admin/reset", apiCfg.reset)
+	mux.HandleFunc("POST /api/validate_chirp", validateChirp)
 
 	server := &http.Server{
 		Addr:    ":8080",
@@ -27,6 +30,66 @@ func healthz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))
+}
+
+func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) error {
+	response, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.WriteHeader(code)
+	w.Write(response)
+	return nil
+}
+
+func respondWithError(w http.ResponseWriter, code int, msg string) error {
+	return respondWithJSON(w, code, map[string]string{"error": msg})
+}
+
+func cleanBody(body string) string {
+	// Remove words that are not allowed
+	forbiddenWords := []string{"kerfuffle", "sharbert", "fornax"}
+	replacement := "****"
+	words := strings.Split(body, " ")
+	for i, word := range words {
+		for _, forbidden := range forbiddenWords {
+			if strings.EqualFold(word, forbidden) {
+				words[i] = replacement
+			}
+		}
+	}
+	cleanedBody := strings.Join(words, " ")
+	return cleanedBody
+}
+
+func validateChirp(w http.ResponseWriter, r *http.Request) {
+	type request struct {
+		Body string `json:"body"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	req := request{}
+	if err := decoder.Decode(&req); err != nil {
+		if err := respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Invalid request body: %v", err)); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+
+	if len(req.Body) > 140 {
+		if err := respondWithError(w, http.StatusBadRequest, "Chirp is too long"); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+
+	cleanedBody := cleanBody(req.Body)
+
+	if err := respondWithJSON(w, http.StatusOK, map[string]string{"cleaned_body": cleanedBody}); err != nil {
+		log.Printf("Error responding with JSON: %v", err)
+	}
 }
 
 type apiConfig struct {
