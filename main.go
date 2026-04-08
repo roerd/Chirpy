@@ -34,6 +34,7 @@ func main() {
 	mux.HandleFunc("GET /admin/metrics", apiCfg.metrics)
 	mux.HandleFunc("POST /admin/reset", apiCfg.reset)
 	mux.HandleFunc("POST /api/validate_chirp", validateChirp)
+	mux.HandleFunc("POST /api/users", apiCfg.createUser)
 
 	server := &http.Server{
 		Addr:    ":8080",
@@ -104,6 +105,33 @@ func validateChirp(w http.ResponseWriter, r *http.Request) {
 	cleanedBody := cleanBody(req.Body)
 
 	if err := respondWithJSON(w, http.StatusOK, map[string]string{"cleaned_body": cleanedBody}); err != nil {
+		log.Printf("Error responding with JSON: %v", err)
+	}
+}
+
+func (cfg *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
+	type request struct {
+		Email string `json:"email"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	req := request{}
+	if err := decoder.Decode(&req); err != nil {
+		if err := respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Invalid request body: %v", err)); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+
+	user, err := cfg.dbQueries.CreateUser(r.Context(), req.Email)
+	if err != nil {
+		if err := respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Error creating user: %v", err)); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+
+	if err := respondWithJSON(w, http.StatusCreated, user); err != nil {
 		log.Printf("Error responding with JSON: %v", err)
 	}
 }
