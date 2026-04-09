@@ -9,7 +9,9 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	"github.com/roerd/Chirpy/internal/database"
 
@@ -27,6 +29,7 @@ func main() {
 
 	apiCfg := &apiConfig{}
 	apiCfg.dbQueries = database.New(db)
+	apiCfg.platform = os.Getenv("PLATFORM")
 
 	mux := http.NewServeMux()
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app/", http.FileServer(http.Dir(".")))))
@@ -109,6 +112,13 @@ func validateChirp(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type User struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email     string    `json:"email"`
+}
+
 func (cfg *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 	type request struct {
 		Email string `json:"email"`
@@ -123,12 +133,19 @@ func (cfg *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := cfg.dbQueries.CreateUser(r.Context(), req.Email)
+	dbUser, err := cfg.dbQueries.CreateUser(r.Context(), req.Email)
 	if err != nil {
 		if err := respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Error creating user: %v", err)); err != nil {
 			log.Printf("Error responding with error: %v", err)
 		}
 		return
+	}
+
+	user := User{
+		ID:        dbUser.ID,
+		CreatedAt: dbUser.CreatedAt,
+		UpdatedAt: dbUser.UpdatedAt,
+		Email:     dbUser.Email,
 	}
 
 	if err := respondWithJSON(w, http.StatusCreated, user); err != nil {
@@ -139,6 +156,7 @@ func (cfg *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 type apiConfig struct {
 	fileserverHits atomic.Int32
 	dbQueries      *database.Queries
+	platform       string
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -160,7 +178,12 @@ func (cfg *apiConfig) metrics(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *apiConfig) reset(w http.ResponseWriter, r *http.Request) {
+	if cfg.platform != "dev" {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
 	cfg.fileserverHits.Store(0)
+	cfg.dbQueries.DeleteUsers(r.Context())
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
