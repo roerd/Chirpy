@@ -36,7 +36,7 @@ func main() {
 	mux.HandleFunc("GET /api/healthz", healthz)
 	mux.HandleFunc("GET /admin/metrics", apiCfg.metrics)
 	mux.HandleFunc("POST /admin/reset", apiCfg.reset)
-	mux.HandleFunc("POST /api/validate_chirp", validateChirp)
+	mux.HandleFunc("POST /api/chirps", apiCfg.createChirp)
 	mux.HandleFunc("POST /api/users", apiCfg.createUser)
 
 	server := &http.Server{
@@ -84,9 +84,29 @@ func cleanBody(body string) string {
 	return cleanedBody
 }
 
-func validateChirp(w http.ResponseWriter, r *http.Request) {
+func validateChirp(w http.ResponseWriter, body string) bool {
+	if len(body) > 140 {
+		if err := respondWithError(w, http.StatusBadRequest, "Chirp is too long"); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return false
+	}
+
+	return true
+}
+
+type Chirp struct {
+	ID        uuid.UUID `json:"id"`
+	UserID    uuid.UUID `json:"user_id"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func (cfg *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
 	type request struct {
-		Body string `json:"body"`
+		UserID uuid.UUID `json:"user_id"`
+		Body   string    `json:"body"`
 	}
 
 	decoder := json.NewDecoder(r.Body)
@@ -98,16 +118,32 @@ func validateChirp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(req.Body) > 140 {
-		if err := respondWithError(w, http.StatusBadRequest, "Chirp is too long"); err != nil {
-			log.Printf("Error responding with error: %v", err)
-		}
+	if !validateChirp(w, req.Body) {
 		return
 	}
 
 	cleanedBody := cleanBody(req.Body)
 
-	if err := respondWithJSON(w, http.StatusOK, map[string]string{"cleaned_body": cleanedBody}); err != nil {
+	dbChirp, err := cfg.dbQueries.CreateChirp(r.Context(), database.CreateChirpParams{
+		UserID: req.UserID,
+		Body:   cleanedBody,
+	})
+	if err != nil {
+		if err := respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Error creating chirp: %v", err)); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+
+	chirp := Chirp{
+		ID:        dbChirp.ID,
+		UserID:    dbChirp.UserID,
+		Body:      dbChirp.Body,
+		CreatedAt: dbChirp.CreatedAt,
+		UpdatedAt: dbChirp.UpdatedAt,
+	}
+
+	if err := respondWithJSON(w, http.StatusCreated, chirp); err != nil {
 		log.Printf("Error responding with JSON: %v", err)
 	}
 }
