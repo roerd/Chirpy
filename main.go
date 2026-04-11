@@ -38,6 +38,7 @@ func main() {
 	mux.HandleFunc("POST /admin/reset", apiCfg.reset)
 	mux.HandleFunc("POST /api/chirps", apiCfg.createChirp)
 	mux.HandleFunc("GET /api/chirps", apiCfg.getAllChirps)
+	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.getChirpByID)
 	mux.HandleFunc("POST /api/users", apiCfg.createUser)
 
 	server := &http.Server{
@@ -170,6 +171,43 @@ func (cfg *apiConfig) getAllChirps(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := respondWithJSON(w, http.StatusOK, chirps); err != nil {
+		log.Printf("Error responding with JSON: %v", err)
+	}
+}
+
+func (cfg *apiConfig) getChirpByID(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("chirpID")
+	chirpID, err := uuid.Parse(idStr)
+	if err != nil {
+		if err := respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Invalid chirp ID: %v", err)); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+
+	dbChirp, err := cfg.dbQueries.GetChirpByID(r.Context(), chirpID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			if err := respondWithError(w, http.StatusNotFound, "Chirp not found"); err != nil {
+				log.Printf("Error responding with error: %v", err)
+			}
+			return
+		}
+		if err := respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Error fetching chirp: %v", err)); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+
+	chirp := Chirp{
+		ID:        dbChirp.ID,
+		UserID:    dbChirp.UserID,
+		Body:      dbChirp.Body,
+		CreatedAt: dbChirp.CreatedAt,
+		UpdatedAt: dbChirp.UpdatedAt,
+	}
+
+	if err := respondWithJSON(w, http.StatusOK, chirp); err != nil {
 		log.Printf("Error responding with JSON: %v", err)
 	}
 }
