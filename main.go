@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
+	"github.com/roerd/Chirpy/internal/auth"
 	"github.com/roerd/Chirpy/internal/database"
 
 	_ "github.com/lib/pq"
@@ -221,7 +222,8 @@ type User struct {
 
 func (cfg *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 	type request struct {
-		Email string `json:"email"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
 
 	decoder := json.NewDecoder(r.Body)
@@ -233,7 +235,25 @@ func (cfg *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dbUser, err := cfg.dbQueries.CreateUser(r.Context(), req.Email)
+	password := req.Password
+	if len(password) < 6 {
+		if err := respondWithError(w, http.StatusBadRequest, "Password must be at least 6 characters long"); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+	hashedPassword, err := auth.HashPassword(password)
+	if err != nil {
+		if err := respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Error hashing password: %v", err)); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+
+	dbUser, err := cfg.dbQueries.CreateUser(r.Context(), database.CreateUserParams{
+		Email:          req.Email,
+		HashedPassword: hashedPassword,
+	})
 	if err != nil {
 		if err := respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Error creating user: %v", err)); err != nil {
 			log.Printf("Error responding with error: %v", err)
