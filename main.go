@@ -37,6 +37,7 @@ func main() {
 	mux.HandleFunc("GET /api/healthz", healthz)
 	mux.HandleFunc("GET /admin/metrics", apiCfg.metrics)
 	mux.HandleFunc("POST /admin/reset", apiCfg.reset)
+	mux.HandleFunc("POST /api/login", apiCfg.login)
 	mux.HandleFunc("POST /api/chirps", apiCfg.createChirp)
 	mux.HandleFunc("GET /api/chirps", apiCfg.getAllChirps)
 	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.getChirpByID)
@@ -96,6 +97,61 @@ func validateChirp(w http.ResponseWriter, body string) bool {
 	}
 
 	return true
+}
+
+func (cfg *apiConfig) login(w http.ResponseWriter, r *http.Request) {
+	type request struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	req := request{}
+	if err := decoder.Decode(&req); err != nil {
+		if err := respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Invalid request body: %v", err)); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+
+	dbUser, err := cfg.dbQueries.GetUserByEmail(r.Context(), req.Email)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			if err := respondWithError(w, http.StatusUnauthorized, "Incorrect email or password"); err != nil {
+				log.Printf("Error responding with error: %v", err)
+			}
+			return
+		}
+		if err := respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Error fetching user: %v", err)); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+
+	match, err := auth.CheckPasswordHash(req.Password, dbUser.HashedPassword)
+	if err != nil {
+		if err := respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Error checking password: %v", err)); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+	if !match {
+		if err := respondWithError(w, http.StatusUnauthorized, "Incorrect email or password"); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+
+	user := User{
+		ID:        dbUser.ID,
+		CreatedAt: dbUser.CreatedAt,
+		UpdatedAt: dbUser.UpdatedAt,
+		Email:     dbUser.Email,
+	}
+
+	if err := respondWithJSON(w, http.StatusOK, user); err != nil {
+		log.Printf("Error responding with JSON: %v", err)
+	}
 }
 
 type Chirp struct {
