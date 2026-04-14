@@ -31,6 +31,7 @@ func main() {
 	apiCfg := &apiConfig{}
 	apiCfg.dbQueries = database.New(db)
 	apiCfg.platform = os.Getenv("PLATFORM")
+	apiCfg.jwtSecret = os.Getenv("JWT_SECRET")
 
 	mux := http.NewServeMux()
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app/", http.FileServer(http.Dir(".")))))
@@ -101,8 +102,9 @@ func validateChirp(w http.ResponseWriter, body string) bool {
 
 func (cfg *apiConfig) login(w http.ResponseWriter, r *http.Request) {
 	type request struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
+		Email            string `json:"email"`
+		Password         string `json:"password"`
+		ExpiresInSeconds int64  `json:"expires_in_seconds"`
 	}
 
 	decoder := json.NewDecoder(r.Body)
@@ -142,14 +144,36 @@ func (cfg *apiConfig) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user := User{
+	if req.ExpiresInSeconds <= 0 || req.ExpiresInSeconds > 3600 {
+		req.ExpiresInSeconds = 3600 // Default to 1 hour if invalid
+	}
+	expiresIn := time.Duration(req.ExpiresInSeconds) * time.Second
+
+	token, err := auth.MakeJWT(dbUser.ID, cfg.jwtSecret, expiresIn)
+	if err != nil {
+		if err := respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Error generating token: %v", err)); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+
+	type response struct {
+		ID        uuid.UUID `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		Email     string    `json:"email"`
+		Token     string    `json:"token"`
+	}
+
+	resp := response{
 		ID:        dbUser.ID,
 		CreatedAt: dbUser.CreatedAt,
 		UpdatedAt: dbUser.UpdatedAt,
 		Email:     dbUser.Email,
+		Token:     token,
 	}
 
-	if err := respondWithJSON(w, http.StatusOK, user); err != nil {
+	if err := respondWithJSON(w, http.StatusOK, resp); err != nil {
 		log.Printf("Error responding with JSON: %v", err)
 	}
 }
@@ -333,6 +357,7 @@ type apiConfig struct {
 	fileserverHits atomic.Int32
 	dbQueries      *database.Queries
 	platform       string
+	jwtSecret      string
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
