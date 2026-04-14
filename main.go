@@ -187,9 +187,23 @@ type Chirp struct {
 }
 
 func (cfg *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		if err := respondWithError(w, http.StatusUnauthorized, "Missing or invalid token"); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+	userID, err := auth.ValidateJWT(token, cfg.jwtSecret)
+	if err != nil {
+		if err := respondWithError(w, http.StatusUnauthorized, "Invalid or expired token"); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+
 	type request struct {
-		UserID uuid.UUID `json:"user_id"`
-		Body   string    `json:"body"`
+		Body string `json:"body"`
 	}
 
 	decoder := json.NewDecoder(r.Body)
@@ -208,7 +222,7 @@ func (cfg *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
 	cleanedBody := cleanBody(req.Body)
 
 	dbChirp, err := cfg.dbQueries.CreateChirp(r.Context(), database.CreateChirpParams{
-		UserID: req.UserID,
+		UserID: userID,
 		Body:   cleanedBody,
 	})
 	if err != nil {
