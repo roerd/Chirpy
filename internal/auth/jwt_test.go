@@ -41,3 +41,19 @@ func TestValidateExpiredJWT(t *testing.T) {
 	_, err = ValidateJWT(token, tokenSecret)
 	require.Error(t, err)
 }
+
+func TestGetBearerToken(t *testing.T) {
+	headers := make(map[string][]string)
+	headers["Authorization"] = []string{"Bearer test-token"}
+
+	token, err := GetBearerToken(headers)
+	require.NoError(t, err)
+	require.Equal(t, "test-token", token)
+
+	_, err = GetBearerToken(make(map[string][]string))
+	require.Error(t, err)
+
+	headers["Authorization"] = []string{"InvalidFormat"}
+	_, err = GetBearerToken(headers)
+	require.Error(t, err)
+}
