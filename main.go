@@ -330,8 +330,8 @@ func (cfg *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	password := req.Password
-	if len(password) < 6 {
-		if err := respondWithError(w, http.StatusBadRequest, "Password must be at least 6 characters long"); err != nil {
+	if len(password) < 5 {
+		if err := respondWithError(w, http.StatusBadRequest, "Password must be at least 5 characters long"); err != nil {
 			log.Printf("Error responding with error: %v", err)
 		}
 		return
