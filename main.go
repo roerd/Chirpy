@@ -19,6 +19,14 @@ import (
 	_ "github.com/lib/pq"
 )
 
+type apiConfig struct {
+	fileserverHits atomic.Int32
+	dbQueries      *database.Queries
+	platform       string
+	jwtSecret      string
+	polkaKey       string
+}
+
 func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
@@ -32,6 +40,7 @@ func main() {
 	apiCfg.dbQueries = database.New(db)
 	apiCfg.platform = os.Getenv("PLATFORM")
 	apiCfg.jwtSecret = os.Getenv("JWT_SECRET")
+	apiCfg.polkaKey = os.Getenv("POLKA_KEY")
 
 	mux := http.NewServeMux()
 	mux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app/", http.FileServer(http.Dir(".")))))
@@ -586,6 +595,14 @@ func (cfg *apiConfig) updateUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *apiConfig) polkaWebhooks(w http.ResponseWriter, r *http.Request) {
+	apiKey, err := auth.GetAPIKey(r.Header)
+	if err != nil || apiKey != cfg.polkaKey {
+		if err := respondWithError(w, http.StatusUnauthorized, "Missing or invalid API key"); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+
 	type request struct {
 		Event string `json:"event"`
 		Data  struct {
@@ -627,13 +644,6 @@ func (cfg *apiConfig) polkaWebhooks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
-}
-
-type apiConfig struct {
-	fileserverHits atomic.Int32
-	dbQueries      *database.Queries
-	platform       string
-	jwtSecret      string
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
