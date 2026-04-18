@@ -44,6 +44,7 @@ func main() {
 	mux.HandleFunc("POST /api/chirps", apiCfg.createChirp)
 	mux.HandleFunc("GET /api/chirps", apiCfg.getAllChirps)
 	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.getChirpByID)
+	mux.HandleFunc("DELETE /api/chirps/{chirpID}", apiCfg.deleteChirp)
 	mux.HandleFunc("POST /api/users", apiCfg.createUser)
 	mux.HandleFunc("PUT /api/users", apiCfg.updateUser)
 
@@ -388,6 +389,63 @@ func (cfg *apiConfig) getChirpByID(w http.ResponseWriter, r *http.Request) {
 	if err := respondWithJSON(w, http.StatusOK, chirp); err != nil {
 		log.Printf("Error responding with JSON: %v", err)
 	}
+}
+
+func (cfg *apiConfig) deleteChirp(w http.ResponseWriter, r *http.Request) {
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		if err := respondWithError(w, http.StatusUnauthorized, "Missing or invalid token"); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+	userID, err := auth.ValidateJWT(token, cfg.jwtSecret)
+	if err != nil {
+		if err := respondWithError(w, http.StatusUnauthorized, "Invalid or expired token"); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+
+	idStr := r.PathValue("chirpID")
+	chirpID, err := uuid.Parse(idStr)
+	if err != nil {
+		if err := respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Invalid chirp ID: %v", err)); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+
+	chirp, err := cfg.dbQueries.GetChirpByID(r.Context(), chirpID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			if err := respondWithError(w, http.StatusNotFound, "Chirp not found"); err != nil {
+				log.Printf("Error responding with error: %v", err)
+			}
+			return
+		}
+		if err := respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Error fetching chirp: %v", err)); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+
+	if chirp.UserID != userID {
+		if err := respondWithError(w, http.StatusForbidden, "You can only delete your own chirps"); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+
+	err = cfg.dbQueries.DeleteChirp(r.Context(), chirpID)
+	if err != nil {
+		if err := respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Error deleting chirp: %v", err)); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type User struct {
