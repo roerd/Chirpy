@@ -102,9 +102,8 @@ func validateChirp(w http.ResponseWriter, body string) bool {
 
 func (cfg *apiConfig) login(w http.ResponseWriter, r *http.Request) {
 	type request struct {
-		Email            string `json:"email"`
-		Password         string `json:"password"`
-		ExpiresInSeconds int64  `json:"expires_in_seconds"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
 
 	decoder := json.NewDecoder(r.Body)
@@ -144,12 +143,7 @@ func (cfg *apiConfig) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.ExpiresInSeconds <= 0 || req.ExpiresInSeconds > 3600 {
-		req.ExpiresInSeconds = 3600 // Default to 1 hour if invalid
-	}
-	expiresIn := time.Duration(req.ExpiresInSeconds) * time.Second
-
-	token, err := auth.MakeJWT(dbUser.ID, cfg.jwtSecret, expiresIn)
+	token, err := auth.MakeJWT(dbUser.ID, cfg.jwtSecret, time.Hour)
 	if err != nil {
 		if err := respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Error generating token: %v", err)); err != nil {
 			log.Printf("Error responding with error: %v", err)
@@ -157,20 +151,29 @@ func (cfg *apiConfig) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	refreshToken := auth.MakeRefreshToken()
+	cfg.dbQueries.CreateRefreshToken(r.Context(), database.CreateRefreshTokenParams{
+		Token:     refreshToken,
+		UserID:    dbUser.ID,
+		ExpiresAt: time.Now().Add(60 * 24 * time.Hour), // Refresh token valid for 7 days
+	})
+
 	type response struct {
-		ID        uuid.UUID `json:"id"`
-		CreatedAt time.Time `json:"created_at"`
-		UpdatedAt time.Time `json:"updated_at"`
-		Email     string    `json:"email"`
-		Token     string    `json:"token"`
+		ID           uuid.UUID `json:"id"`
+		CreatedAt    time.Time `json:"created_at"`
+		UpdatedAt    time.Time `json:"updated_at"`
+		Email        string    `json:"email"`
+		Token        string    `json:"token"`
+		RefreshToken string    `json:"refresh_token"`
 	}
 
 	resp := response{
-		ID:        dbUser.ID,
-		CreatedAt: dbUser.CreatedAt,
-		UpdatedAt: dbUser.UpdatedAt,
-		Email:     dbUser.Email,
-		Token:     token,
+		ID:           dbUser.ID,
+		CreatedAt:    dbUser.CreatedAt,
+		UpdatedAt:    dbUser.UpdatedAt,
+		Email:        dbUser.Email,
+		Token:        token,
+		RefreshToken: refreshToken,
 	}
 
 	if err := respondWithJSON(w, http.StatusOK, resp); err != nil {
