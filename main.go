@@ -40,6 +40,7 @@ func main() {
 	mux.HandleFunc("POST /admin/reset", apiCfg.reset)
 	mux.HandleFunc("POST /api/login", apiCfg.login)
 	mux.HandleFunc("POST /api/refresh", apiCfg.refresh)
+	mux.HandleFunc("POST /api/revoke", apiCfg.revoke)
 	mux.HandleFunc("POST /api/chirps", apiCfg.createChirp)
 	mux.HandleFunc("GET /api/chirps", apiCfg.getAllChirps)
 	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.getChirpByID)
@@ -231,6 +232,32 @@ func (cfg *apiConfig) refresh(w http.ResponseWriter, r *http.Request) {
 	if err := respondWithJSON(w, http.StatusOK, resp); err != nil {
 		log.Printf("Error responding with JSON: %v", err)
 	}
+}
+
+func (cfg *apiConfig) revoke(w http.ResponseWriter, r *http.Request) {
+	refreshToken, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		if err := respondWithError(w, http.StatusUnauthorized, "Missing or invalid token"); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+
+	_, err = cfg.dbQueries.RevokeRefreshToken(r.Context(), refreshToken)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			if err := respondWithError(w, http.StatusUnauthorized, "Invalid refresh token"); err != nil {
+				log.Printf("Error responding with error: %v", err)
+			}
+			return
+		}
+		if err := respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Error revoking refresh token: %v", err)); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type Chirp struct {
