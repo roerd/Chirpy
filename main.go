@@ -39,6 +39,7 @@ func main() {
 	mux.HandleFunc("GET /admin/metrics", apiCfg.metrics)
 	mux.HandleFunc("POST /admin/reset", apiCfg.reset)
 	mux.HandleFunc("POST /api/login", apiCfg.login)
+	mux.HandleFunc("POST /api/refresh", apiCfg.refresh)
 	mux.HandleFunc("POST /api/chirps", apiCfg.createChirp)
 	mux.HandleFunc("GET /api/chirps", apiCfg.getAllChirps)
 	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.getChirpByID)
@@ -174,6 +175,57 @@ func (cfg *apiConfig) login(w http.ResponseWriter, r *http.Request) {
 		Email:        dbUser.Email,
 		Token:        token,
 		RefreshToken: refreshToken,
+	}
+
+	if err := respondWithJSON(w, http.StatusOK, resp); err != nil {
+		log.Printf("Error responding with JSON: %v", err)
+	}
+}
+
+func (cfg *apiConfig) refresh(w http.ResponseWriter, r *http.Request) {
+	refreshToken, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		if err := respondWithError(w, http.StatusUnauthorized, "Missing or invalid token"); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+
+	dbToken, err := cfg.dbQueries.GetRefreshToken(r.Context(), refreshToken)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			if err := respondWithError(w, http.StatusUnauthorized, "Invalid refresh token"); err != nil {
+				log.Printf("Error responding with error: %v", err)
+			}
+			return
+		}
+		if err := respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Error fetching refresh token: %v", err)); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+
+	if dbToken.RevokedAt.Valid || dbToken.ExpiresAt.Before(time.Now()) {
+		if err := respondWithError(w, http.StatusUnauthorized, "Refresh token is expired or revoked"); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+
+	token, err := auth.MakeJWT(dbToken.UserID, cfg.jwtSecret, time.Hour)
+	if err != nil {
+		if err := respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Error generating token: %v", err)); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+
+	type response struct {
+		Token string `json:"token"`
+	}
+
+	resp := response{
+		Token: token,
 	}
 
 	if err := respondWithJSON(w, http.StatusOK, resp); err != nil {
