@@ -45,6 +45,7 @@ func main() {
 	mux.HandleFunc("GET /api/chirps", apiCfg.getAllChirps)
 	mux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.getChirpByID)
 	mux.HandleFunc("POST /api/users", apiCfg.createUser)
+	mux.HandleFunc("PUT /api/users", apiCfg.updateUser)
 
 	server := &http.Server{
 		Addr:    ":8080",
@@ -445,6 +446,77 @@ func (cfg *apiConfig) createUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := respondWithJSON(w, http.StatusCreated, user); err != nil {
+		log.Printf("Error responding with JSON: %v", err)
+	}
+}
+
+func (cfg *apiConfig) updateUser(w http.ResponseWriter, r *http.Request) {
+	token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		if err := respondWithError(w, http.StatusUnauthorized, "Missing or invalid token"); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+	userID, err := auth.ValidateJWT(token, cfg.jwtSecret)
+	if err != nil {
+		if err := respondWithError(w, http.StatusUnauthorized, "Invalid or expired token"); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+
+	type request struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	req := request{}
+	if err := decoder.Decode(&req); err != nil {
+		if err := respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Invalid request body: %v", err)); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+
+	var hashedPassword string
+	if req.Password != "" {
+		if len(req.Password) < 5 {
+			if err := respondWithError(w, http.StatusBadRequest, "Password must be at least 5 characters long"); err != nil {
+				log.Printf("Error responding with error: %v", err)
+			}
+			return
+		}
+		hashedPassword, err = auth.HashPassword(req.Password)
+		if err != nil {
+			if err := respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Error hashing password: %v", err)); err != nil {
+				log.Printf("Error responding with error: %v", err)
+			}
+			return
+		}
+	}
+
+	dbUser, err := cfg.dbQueries.UpdateUser(r.Context(), database.UpdateUserParams{
+		ID:             userID,
+		Email:          req.Email,
+		HashedPassword: hashedPassword,
+	})
+	if err != nil {
+		if err := respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Error updating user: %v", err)); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+
+	user := User{
+		ID:        dbUser.ID,
+		CreatedAt: dbUser.CreatedAt,
+		UpdatedAt: dbUser.UpdatedAt,
+		Email:     dbUser.Email,
+	}
+
+	if err := respondWithJSON(w, http.StatusOK, user); err != nil {
 		log.Printf("Error responding with JSON: %v", err)
 	}
 }
