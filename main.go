@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -357,6 +358,14 @@ func (cfg *apiConfig) getAllChirps(w http.ResponseWriter, r *http.Request) {
 		authorID = uuid.Nil
 	}
 
+	sortParam := r.URL.Query().Get("sort")
+	if sortParam != "" && sortParam != "asc" && sortParam != "desc" {
+		if err := respondWithError(w, http.StatusBadRequest, "Invalid sort parameter"); err != nil {
+			log.Printf("Error responding with error: %v", err)
+		}
+		return
+	}
+
 	var dbChirps []database.Chirp
 	if authorID != uuid.Nil {
 		dbChirps, err = cfg.dbQueries.GetChirpsByUserID(r.Context(), authorID)
@@ -380,6 +389,18 @@ func (cfg *apiConfig) getAllChirps(w http.ResponseWriter, r *http.Request) {
 			UpdatedAt: dbChirp.UpdatedAt,
 		}
 	}
+
+	asc := func(i, j int) bool {
+		return chirps[i].CreatedAt.Before(chirps[j].CreatedAt)
+	}
+	desc := func(i, j int) bool {
+		return chirps[i].CreatedAt.After(chirps[j].CreatedAt)
+	}
+	less := asc
+	if sortParam == "desc" {
+		less = desc
+	}
+	sort.Slice(chirps, less)
 
 	if err := respondWithJSON(w, http.StatusOK, chirps); err != nil {
 		log.Printf("Error responding with JSON: %v", err)
