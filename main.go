@@ -342,7 +342,27 @@ func (cfg *apiConfig) createChirp(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *apiConfig) getAllChirps(w http.ResponseWriter, r *http.Request) {
-	dbChirps, err := cfg.dbQueries.GetAllChirps(r.Context())
+	s := r.URL.Query().Get("author_id")
+	var authorID uuid.UUID
+	var err error
+	if s != "" {
+		authorID, err = uuid.Parse(s)
+		if err != nil {
+			if err := respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Invalid author_id: %v", err)); err != nil {
+				log.Printf("Error responding with error: %v", err)
+			}
+			return
+		}
+	} else {
+		authorID = uuid.Nil
+	}
+
+	var dbChirps []database.Chirp
+	if authorID != uuid.Nil {
+		dbChirps, err = cfg.dbQueries.GetChirpsByUserID(r.Context(), authorID)
+	} else {
+		dbChirps, err = cfg.dbQueries.GetAllChirps(r.Context())
+	}
 	if err != nil {
 		if err := respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Error fetching chirps: %v", err)); err != nil {
 			log.Printf("Error responding with error: %v", err)
